@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ebs-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ebs-app
+  template:
+    metadata:
+      labels:
+        app: ebs-app
+    spec:
+      containers:
+      - name: ebs-container
+        image: busybox
+        command: [ "sh", "-c", "echo 'Hello from EBS' > /data/output.txt && sleep 3600" ]
+        volumeMounts:
+        - mountPath: "/data"
+          name: ebs-volume
+      volumes:
+      - name: ebs-volume
+        persistentVolumeClaim:
+          claimName: ebs-claim
