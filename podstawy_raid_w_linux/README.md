@@ -808,7 +808,6 @@ sudo update-initramfs -u                                         # Aktualizuj in
 
 ---
 
-**Autor:** Seria Linux Tutorial
 **Link do serii:** https://www.youtube.com/playlist?list=PLudQEwO9egC6ngKVezYmz_5ZldYCvqn24
 
 ---
