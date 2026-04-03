@@ -9,6 +9,78 @@ mkdir docker-demo && cd docker-demo
 ```
 Tworzy katalog roboczy dla demo.
 
+### app.py
+
+```python
+from flask import Flask, request, jsonify
+import psycopg2, os
+
+app = Flask(__name__)
+
+def get_conn():
+    return psycopg2.connect(
+        host=os.environ["DB_HOST"],
+        database=os.environ["DB_NAME"],
+        user=os.environ["DB_USER"],
+        password=os.environ["DB_PASSWORD"]
+    )
+
+@app.route("/")
+def notes():
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("CREATE TABLE IF NOT EXISTS notes (id SERIAL, content TEXT)")
+    conn.commit()
+    cur.execute("SELECT id, content FROM notes")
+    rows = cur.fetchall()
+    conn.close()
+    return jsonify(rows)
+
+@app.route("/add", methods=["POST"])
+def add():
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO notes (content) VALUES (%s)", (request.json["content"],))
+    conn.commit()
+    conn.close()
+    return jsonify({"status": "ok"})
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
+```
+
+### Dockerfile
+
+```dockerfile
+FROM python:3.12-slim
+WORKDIR /app
+RUN pip install flask psycopg2-binary
+COPY app.py .
+CMD ["python", "app.py"]
+```
+
+### compose.yaml (wersja początkowa — bez volumenu)
+
+```yaml
+services:
+  app:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      DB_HOST: db
+      DB_NAME: notes
+      DB_USER: postgres
+      DB_PASSWORD: haslo
+
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: notes
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: haslo
+```
+
 ```bash
 docker compose up -d
 ```
@@ -23,8 +95,10 @@ Sprawdza czy aplikacja odpowiada. Oczekiwany wynik: `[]`
 curl -X POST localhost:5000/add \
   -H "Content-Type: application/json" \
   -d '{"content": "moja pierwsza notatka"}'
+
+curl localhost:5000
 ```
-Dodaje notatkę do bazy przez API.
+Dodaje notatkę i weryfikuje że jest w bazie. Oczekiwany wynik: `[[1, "moja pierwsza notatka"]]`
 
 ---
 
@@ -46,10 +120,41 @@ Pokazuje listę volumenów. Bez named volume widać wolumen z losowym hashem (an
 
 ## Named volumes — naprawienie problemu
 
+### compose.yaml (z named volume)
+
+```yaml
+services:
+  app:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      DB_HOST: db
+      DB_NAME: notes
+      DB_USER: postgres
+      DB_PASSWORD: haslo
+
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: notes
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: haslo
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
+```
+
 ```bash
 docker compose up -d
+
+curl -X POST localhost:5000/add \
+  -H "Content-Type: application/json" \
+  -d '{"content": "ta notatka przeżyje restart"}'
 ```
-Po dodaniu `pgdata:/var/lib/postgresql/data` do `compose.yaml` — uruchamia stack z named volume.
+Uruchamia stack z named volume i dodaje testową notatkę.
 
 ```bash
 docker volume ls
@@ -59,7 +164,7 @@ Weryfikuje że `docker-demo_pgdata` istnieje. Czytelna nazwa zamiast losowego ha
 ```bash
 docker volume inspect docker-demo_pgdata
 ```
-Pokazuje gdzie na hoście Docker przechowuje dane volumenu (`/var/lib/docker/volumes/docker-demo_pgdata/_data`).
+Pokazuje gdzie na hoście Docker przechowuje dane volumenu (`/var/lib/docker/volumes/docker-demo_pgdata/_data`). Tego katalogu nie ruszasz ręcznie — zarządzasz przez `docker volume` komendy.
 
 ```bash
 docker compose down
@@ -81,16 +186,48 @@ docker compose down -v
 
 ## Bind mounts — development workflow
 
+### compose.yaml (z bind mount dla app)
+
+```yaml
+  app:
+    build: .
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./app.py:/app/app.py
+    environment:
+      DB_HOST: db
+      DB_NAME: notes
+      DB_USER: postgres
+      DB_PASSWORD: haslo
+```
+
 ```bash
 docker compose up -d
 ```
-Po dodaniu `./app.py:/app/app.py` do serwisu app — montuje lokalny plik kodu do kontenera.
+Montuje lokalny `app.py` do kontenera — zmiany w pliku na hoście są natychmiast widoczne w kontenerze.
+
+### app.py (zaktualizowana wersja z licznikiem)
+
+```python
+@app.route("/")
+def notes():
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("CREATE TABLE IF NOT EXISTS notes (id SERIAL, content TEXT)")
+    conn.commit()
+    cur.execute("SELECT id, content FROM notes")
+    rows = cur.fetchall()
+    conn.close()
+    return jsonify({"notes": rows, "total": len(rows)})
+```
 
 ```bash
 docker compose restart app
 curl localhost:5000
 ```
 Po zmianie w lokalnym `app.py` — restartuje tylko serwis app. Zmiana widoczna bez `docker build`.
+Oczekiwany wynik: `{"notes": [[1, "ta notatka przeżyje restart"]], "total": 1}`
 
 ---
 
@@ -127,31 +264,57 @@ Wychodzi z kontenera.
 
 ## Compose best practices
 
-### Zmienne środowiskowe przez .env
+### .env
+
+```
+POSTGRES_PASSWORD=haslo
+DB_PASSWORD=haslo
+DB_NAME=notes
+DB_USER=postgres
+```
+Hasła i konfiguracja poza `compose.yaml`. Plik trafia na serwer, nie do repozytorium. W repo trzymasz `.env.example` z kluczami ale bez wartości.
 
 ```bash
 echo ".env" >> .gitignore
 ```
 Dodaje `.env` do gitignore — hasła nie trafiają do repozytorium.
 
+### compose.yaml (z .env i restart policy)
+
+```yaml
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./app.py:/app/app.py
+    environment:
+      DB_HOST: db
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
+```
+
+- `restart: unless-stopped` — Docker restartuje kontener gdy padnie, ale nie rusza gdy ręcznie zatrzymasz przez `docker compose stop`.
+
 ```bash
 docker compose config
 ```
-Pokazuje finalny `compose.yaml` z podstawionymi zmiennymi z `.env`. Używaj przed uruchomieniem na produkcji żeby zweryfikować że wszystko się poprawnie podstawiło.
-
-### depends_on z healthcheck
-
-```bash
-docker compose down
-docker compose up -d
-```
-Po dodaniu healthcheck do `db` i `depends_on: condition: service_healthy` do `app` — uruchamia stack. App wystartuje dopiero gdy postgres odpowie na `pg_isready`.
-
-Oczekiwany wynik:
-```
-✔ Container docker-demo-db-1   Healthy
-✔ Container docker-demo-app-1  Started
-```
+Pokazuje finalny `compose.yaml` z podstawionymi zmiennymi z `.env`. Używaj przed uruchomieniem na produkcji żeby zweryfikować poprawność.
 
 ---
 
