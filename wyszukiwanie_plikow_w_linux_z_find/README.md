@@ -3,10 +3,37 @@
 ## Setup środowiska
 
 ```bash
-bash setup.sh
-```
+#!/bin/bash
+mkdir -p projekt/{logs,config,app/src,backup}
 
-**setup.sh** tworzy katalog `projekt/` z logami, configami i dużym plikiem do ćwiczeń.
+# Aktualne logi
+echo "INFO: server started" > projekt/logs/app.log
+echo "ERROR: connection timeout" > projekt/logs/error.log
+
+# Stare logi
+echo "INFO: old entry" > projekt/logs/app_old.log
+touch -d "45 days ago" projekt/logs/app_old.log
+
+echo "DEBUG: verbose output" > projekt/logs/debug_old.log
+touch -d "60 days ago" projekt/logs/debug_old.log
+
+# Config
+echo "server_port=8080" > projekt/config/app.conf
+echo "DB_PASSWORD=secret123" > projekt/config/.env
+chmod 777 projekt/config/.env
+
+# App
+touch projekt/app/main.py
+touch projekt/app/src/utils.py
+touch projekt/app/src/helpers.py
+
+# Duży plik
+dd if=/dev/zero of=projekt/backup/dump.sql bs=1M count=100 2>/dev/null
+touch -d "10 days ago" projekt/backup/dump.sql
+echo "backup complete" > projekt/backup/backup.log
+
+echo "Gotowe."
+```
 
 ## Podstawy
 
